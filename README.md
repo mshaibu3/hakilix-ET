@@ -16,53 +16,27 @@ This repository is an **industrial demo stack** showing a full, runnable referen
 ## System Architecture
 
 ```flowchart LR
-  subgraph Edge["Edge (Residence)"]
-    Radar["4D mmWave Radar"]
-    Thermal["Radiometric Thermal"]
-    EdgeAI["Edge AI Inference (SNN/LIF)"]
-    Radar --> EdgeAI
-    Thermal --> EdgeAI
+  subgraph Home["Resident Home / Edge"]
+    R["Resident"]
+    S["Sensors<br/>(mmWave Radar + Radiometric Thermal)<br/>(simulated)"]
+    E["Edge Device<br/>Inference (SNN-ready placeholder)"]
+    R --> S --> E
   end
 
-  subgraph Ingestion["Ingestion & API"]
-    SIM["Telemetry Simulator"]
-    API["Hakilix API (FastAPI)"]
-    Broker["Message Broker (NATS/Kafka)"]
-    Worker["Stream Processor / Worker"]
+  subgraph Platform["Hakilix Platform"]
+    API["Hakilix API<br/>(FastAPI)"]
+    DB["TimescaleDB<br/>(Postgres + Timescale)"]
+    REDIS["Redis<br/>(cache / rate limit)"]
+    DASH["Dashboard<br/>(Streamlit)"]
+    SIM["Telemetry Simulator<br/>(10 residents)"]
   end
 
-  subgraph Data["Data Plane"]
-    TSDB["TimescaleDB / Postgres"]
-    Redis["Redis Cache"]
-    Audit["Audit Log"]
-  end
-
-  subgraph Observability["Observability"]
-    OTel["OpenTelemetry Collector"]
-    Logs["Structured Logs"]
-    Traces["Traces + Metrics"]
-  end
-
-  subgraph Apps["Apps"]
-    Dash["Dashboard (Streamlit)"]
-    Clin["FHIR Export + Validation"]
-  end
-
-  EdgeAI -->|telemetry_http| API
+  E -->|telemetry_http| API
   SIM -->|telemetry_http| API
-  API --> Broker
-  Broker --> Worker
-  API --> TSDB
-  Worker --> TSDB
-  API --> Redis
-  API --> Audit
-  API --> OTel
-  Worker --> OTel
-  Dash -->|read_api| API
-  API --> Clin
-  OTel --> Logs
-  OTel --> Traces
-
+  API --> DB
+  API --> REDIS
+  DASH -->|rest_queries| API
+  API -->|risk_events| DB
 ```
 
 ### Data Flow
