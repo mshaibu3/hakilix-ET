@@ -1,0 +1,153 @@
+services:
+  timescaledb:
+    image: timescale/timescaledb:latest-pg14
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+    - ${POSTGRES_PORT}:5432
+    volumes:
+    - timescale_data:/var/lib/postgresql/data
+    - ./infra/timescale/init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - pg_isready -U postgres -d ${POSTGRES_DB}
+      interval: 5s
+      timeout: 5s
+      retries: 20
+  redis:
+    image: redis:7.2-alpine
+    ports:
+    - ${REDIS_PORT}:6379
+    healthcheck:
+      test:
+      - CMD
+      - redis-cli
+      - ping
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  hakilix-migrate:
+    build:
+      context: ./services/api
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL_MIGRATOR: ${DATABASE_URL_MIGRATOR}
+      DEMO_AGENCY_ID: ${DEMO_AGENCY_ID}
+      DEMO_AGENCY_NAME: ${DEMO_AGENCY_NAME}
+      DEMO_ADMIN_EMAIL: ${DEMO_ADMIN_EMAIL}
+      DEMO_ADMIN_PASSWORD: ${DEMO_ADMIN_PASSWORD}
+      HAKILIX_JWT_SECRET: ${HAKILIX_JWT_SECRET}
+      DATABASE_URL_APP: ${DATABASE_URL_APP}
+    command:
+    - python
+    - -m
+    - hakilix.scripts.migrate_and_seed
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    restart: 'no'
+    image: mshaibu/hakilix-api:${TAG:-latest}
+  hakilix-api:
+    build:
+      context: ./services/api
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL_APP: ${DATABASE_URL_APP}
+      DATABASE_URL_MIGRATOR: ${DATABASE_URL_MIGRATOR}
+      REDIS_URL: ${REDIS_URL}
+      HAKILIX_JWT_SECRET: ${HAKILIX_JWT_SECRET}
+      BROKER_TYPE: ${BROKER_TYPE}
+      PUBSUB_TOPIC: ${PUBSUB_TOPIC}
+      OIDC_ENABLED: ${OIDC_ENABLED}
+      OIDC_ISSUER: ${OIDC_ISSUER}
+      OIDC_AUDIENCE: ${OIDC_AUDIENCE}
+      OIDC_JWKS_URL: ${OIDC_JWKS_URL}
+    ports:
+    - ${API_PORT}:8080
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      hakilix-migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - python -c "import requests,sys; r=requests.get('http://127.0.0.1:8080/v1/health',timeout=2);
+        sys.exit(0 if r.status_code==200 else 1)"
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    image: mshaibu/hakilix-api:${TAG:-latest}
+  hakilix-inference:
+    build:
+      context: ./services/inference
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL_APP: ${DATABASE_URL_APP}
+      REDIS_URL: ${REDIS_URL}
+      MODEL_PATH: /app/model/hakilix_risk_v1.onnx
+      LOG_LEVEL: INFO
+      DATABASE_URL_MIGRATOR: ${DATABASE_URL_MIGRATOR}
+    depends_on:
+      hakilix-api:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      timescaledb:
+        condition: service_healthy
+    image: mshaibu/hakilix-inference:${TAG:-latest}
+  hakilix-telemetry-sim:
+    build:
+      context: ./services/telemetry_sim
+      dockerfile: Dockerfile
+    environment:
+      API_BASE: http://hakilix-api:8080/v1
+      DEMO_AGENCY_ID: ${DEMO_AGENCY_ID}
+      RESIDENT_IDS: ${DEMO_RESIDENT_IDS}
+      PUBLISH_HZ: 1
+      DATABASE_URL_APP: ${DATABASE_URL_APP}
+      DATABASE_URL_MIGRATOR: ${DATABASE_URL_MIGRATOR}
+    depends_on:
+      hakilix-api:
+        condition: service_healthy
+    image: mshaibu/hakilix-telemetry-sim:${TAG:-latest}
+  hakilix-dashboard:
+    build:
+      context: ./services/dashboard
+      dockerfile: Dockerfile
+    environment:
+      API_BASE_URL: http://hakilix-api:8080
+      DEMO_ADMIN_EMAIL: ${DEMO_ADMIN_EMAIL}
+      DEMO_ADMIN_PASSWORD: ${DEMO_ADMIN_PASSWORD}
+      DEMO_AGENCY_ID: ${DEMO_AGENCY_ID}
+      DATABASE_URL_APP: ${DATABASE_URL_APP}
+      DATABASE_URL_MIGRATOR: ${DATABASE_URL_MIGRATOR}
+    ports:
+    - ${DASHBOARD_PORT}:8501
+    depends_on:
+      hakilix-api:
+        condition: service_healthy
+    image: mshaibu/hakilix-dashboard:${TAG:-latest}
+  hakilix-worker:
+    build:
+      context: ./services/worker
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL_APP: ${DATABASE_URL_APP}
+      REDIS_URL: ${REDIS_URL}
+      OTEL_ENABLED: ${OTEL_ENABLED}
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+    - 8082:8082
+    image: mshaibu/hakilix-worker:${TAG:-latest}
+volumes:
+  timescale_data: null

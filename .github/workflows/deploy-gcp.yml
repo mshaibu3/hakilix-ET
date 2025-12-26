@@ -1,0 +1,48 @@
+name: Deploy to GCP (Cloud Run)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      REGION: europe-west2
+    steps:
+      - uses: actions/checkout@v4
+
+      # Workload Identity Federation (recommended). Configure in GCP and set these secrets in GitHub:
+      # - GCP_WORKLOAD_IDENTITY_PROVIDER
+      # - GCP_SERVICE_ACCOUNT_EMAIL
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker auth
+        run: gcloud auth configure-docker $REGION-docker.pkg.dev --quiet
+
+      - name: Build & push images
+        run: |
+          PROJECT_ID=$(gcloud config get-value project)
+          REPO=$REGION-docker.pkg.dev/$PROJECT_ID/hakilix
+          docker build -t $REPO/api:latest hakilix_enterprise_advanced/services/api
+          docker build -t $REPO/worker:latest hakilix_enterprise_advanced/services/worker
+          docker build -t $REPO/dashboard:latest hakilix_enterprise_advanced/services/dashboard
+          docker push $REPO/api:latest
+          docker push $REPO/worker:latest
+          docker push $REPO/dashboard:latest
+
+      - name: Terraform apply
+        working-directory: hakilix_enterprise_advanced/infra/gcp/terraform
+        run: |
+          PROJECT_ID=$(gcloud config get-value project)
+          terraform init
+          terraform apply -auto-approve             -var project_id=$PROJECT_ID             -var region=$REGION             -var api_image=$REGION-docker.pkg.dev/$PROJECT_ID/hakilix/api:latest             -var worker_image=$REGION-docker.pkg.dev/$PROJECT_ID/hakilix/worker:latest             -var dashboard_image=$REGION-docker.pkg.dev/$PROJECT_ID/hakilix/dashboard:latest             -var hakilix_jwt_secret="${{ secrets.HAKILIX_JWT_SECRET }}"             -var database_url_app="${{ secrets.DATABASE_URL_APP }}"             -var database_url_migrator="${{ secrets.DATABASE_URL_MIGRATOR }}"
