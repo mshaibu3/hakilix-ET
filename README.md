@@ -15,28 +15,69 @@ This repository is an **industrial demo stack** showing a full, runnable referen
 
 ## System Architecture
 
-```flowchart LR
-  subgraph Home["Resident Home / Edge"]
-    R["Resident"]
-    S["Sensors<br/>(mmWave Radar + Radiometric Thermal)<br/>(simulated)"]
-    E["Edge Device<br/>Inference (SNN-ready placeholder)"]
-    R --> S --> E
+```mermaid
+flowchart LR
+  %% ============= Edge / Home =============
+  subgraph HOME["Resident Home / Edge"]
+    Radar["4D mmWave Radar"]
+    Thermal["Radiometric Thermal"]
+    EdgeAI["Edge AI Inference<br/>(SNN/LIF placeholder)"]
+    Resident["Resident"]
+    Sensors["Sensor Fusion<br/>(Radar + Thermal)"]
+    Resident --> Sensors
+    Radar --> EdgeAI
+    Thermal --> EdgeAI
+    Sensors --> EdgeAI
   end
 
-  subgraph Platform["Hakilix Platform"]
+  %% ============= Platform / Ingestion =============
+  subgraph PLATFORM["Hakilix Platform"]
     API["Hakilix API<br/>(FastAPI)"]
-    DB["TimescaleDB<br/>(Postgres + Timescale)"]
-    REDIS["Redis<br/>(cache / rate limit)"]
-    DASH["Dashboard<br/>(Streamlit)"]
-    SIM["Telemetry Simulator<br/>(10 residents)"]
+    Broker["Message Broker<br/>(NATS/Kafka)"]
+    Worker["Stream Processor / Worker"]
+    Dashboard["Dashboard<br/>(Streamlit)"]
+    Simulator["Telemetry Simulator<br/>(10 residents)"]
   end
 
-  E -->|telemetry_http| API
-  SIM -->|telemetry_http| API
-  API --> DB
-  API --> REDIS
-  DASH -->|rest_queries| API
-  API -->|risk_events| DB
+  %% ============= Data Plane =============
+  subgraph DATA["Data Plane"]
+    TSDB["TimescaleDB<br/>(Postgres + Timescale)"]
+    Cache["Redis<br/>(cache / rate limit)"]
+    Audit["Audit Log"]
+  end
+
+  %% ============= Observability =============
+  subgraph OBS["Observability"]
+    OTel["OpenTelemetry Collector"]
+    Logs["Structured Logs"]
+    Traces["Traces + Metrics"]
+  end
+
+  %% ============= Clinical / Interop =============
+  subgraph CLIN["Clinical / Interop"]
+    FHIR["FHIR Export + Validation"]
+  end
+
+  %% ============= Flows =============
+  EdgeAI -->|telemetry_http| API
+  Simulator -->|telemetry_http| API
+
+  API --> Broker
+  Broker --> Worker
+
+  API --> TSDB
+  Worker --> TSDB
+  API --> Cache
+  API --> Audit
+
+  API --> OTel
+  Worker --> OTel
+  OTel --> Logs
+  OTel --> Traces
+
+  Dashboard -->|read_api| API
+  API --> FHIR
+
 ```
 
 ### Data Flow
