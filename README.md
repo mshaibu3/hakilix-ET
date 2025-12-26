@@ -15,29 +15,54 @@ This repository is an **industrial demo stack** showing a full, runnable referen
 
 ## System Architecture
 
-```mermaid
-flowchart LR
-  subgraph Home["Resident Home / Edge"]
-    R["Resident"]
-    S["Sensors\n(mmWave Radar + Radiometric Thermal)\n(simulated)"]
-    E["Edge Device\nInference (SNN-ready placeholder)"]
-    R --> S --> E
+```flowchart LR
+  subgraph Edge["Edge (Residence)"]
+    Radar["4D mmWave Radar"]
+    Thermal["Radiometric Thermal"]
+    EdgeAI["Edge AI Inference (SNN/LIF)"]
+    Radar --> EdgeAI
+    Thermal --> EdgeAI
   end
 
-  subgraph Platform["Hakilix Platform"]
-    API["Hakilix API\n(FastAPI)"]
-    DB["TimescaleDB\n(Postgres + Timescale)"]
-    REDIS["Redis\n(cache / rate limit)"]
-    DASH["Dashboard\n(Streamlit)"]
-    SIM["Telemetry Simulator\n(10 residents)"]
+  subgraph Ingestion["Ingestion & API"]
+    SIM["Telemetry Simulator"]
+    API["Hakilix API (FastAPI)"]
+    Broker["Message Broker (NATS/Kafka)"]
+    Worker["Stream Processor / Worker"]
   end
 
-  E -->|telemetry ingest (HTTP)| API
-  SIM -->|telemetry ingest (HTTP)| API
-  API --> DB
-  API --> REDIS
-  DASH -->|REST queries| API
-  API -->|risk events| DB
+  subgraph Data["Data Plane"]
+    TSDB["TimescaleDB / Postgres"]
+    Redis["Redis Cache"]
+    Audit["Audit Log"]
+  end
+
+  subgraph Observability["Observability"]
+    OTel["OpenTelemetry Collector"]
+    Logs["Structured Logs"]
+    Traces["Traces + Metrics"]
+  end
+
+  subgraph Apps["Apps"]
+    Dash["Dashboard (Streamlit)"]
+    Clin["FHIR Export + Validation"]
+  end
+
+  EdgeAI -->|telemetry_http| API
+  SIM -->|telemetry_http| API
+  API --> Broker
+  Broker --> Worker
+  API --> TSDB
+  Worker --> TSDB
+  API --> Redis
+  API --> Audit
+  API --> OTel
+  Worker --> OTel
+  Dash -->|read_api| API
+  API --> Clin
+  OTel --> Logs
+  OTel --> Traces
+
 ```
 
 ### Data Flow
